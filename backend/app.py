@@ -17,8 +17,8 @@ import json
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, EmailStr
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import aiofiles
 import httpx
 import uuid
@@ -184,7 +184,7 @@ async def generate_and_send_daily_codes():
 async def send_daily_code_email(email: str, username: str, code: str):
     """发送每日验证码邮件"""
     try:
-        msg = MimeMultipart()
+        msg = MIMEMultipart()
         msg['From'] = settings.SMTP_USERNAME
         msg['To'] = email
         msg['Subject'] = f"AI工作流平台每日登录码 - {datetime.now().strftime('%Y-%m-%d')}"
@@ -200,7 +200,7 @@ async def send_daily_code_email(email: str, username: str, code: str):
         AI工作流平台
         """
         
-        msg.attach(MimeText(body, 'plain', 'utf-8'))
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
         
         # 异步发送邮件
         await asyncio.get_event_loop().run_in_executor(
@@ -214,7 +214,7 @@ async def send_daily_code_email(email: str, username: str, code: str):
         logger.error(f"发送邮件失败 ({email}): {e}")
         raise
 
-def _send_email_sync(msg: MimeMultipart, email: str):
+def _send_email_sync(msg: MIMEMultipart, email: str):
     """同步发送邮件"""
     server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
     server.starttls()
