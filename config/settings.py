@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     
     # 安全配置
     SECRET_KEY: str = "your-secret-key-change-in-production"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:8000", 
+        "http://127.0.0.1:8000",
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000"
+    ]
     
     # 邮件配置
     SMTP_SERVER: str = "smtp.gmail.com"
