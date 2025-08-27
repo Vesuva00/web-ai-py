@@ -59,6 +59,9 @@ async def lifespan(app: FastAPI):
     await init_database()
     logger.info("数据库初始化完成")
     
+    # 检查并生成当日验证码
+    await check_and_generate_today_codes()
+    
     # 启动每日验证码生成任务
     asyncio.create_task(daily_code_generator())
     logger.info("每日验证码生成任务启动")
@@ -114,6 +117,40 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="身份验证失败"
         )
 
+async def get_current_admin(current_user: str = Depends(get_current_user)) -> str:
+    """验证当前用户是否为管理员"""
+    try:
+        users = settings.get_users()
+        if current_user not in users:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="用户信息未找到"
+            )
+        
+        user_info = users[current_user]
+        if user_info.get("role") != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="权限不足，需要管理员权限"
+            )
+        
+        if not user_info.get("enabled", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="用户账户已被禁用"
+            )
+        
+        return current_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"管理员权限验证失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="权限验证失败"
+        )
+
 async def verify_token(token: str) -> Optional[str]:
     """验证访问令牌"""
     try:
@@ -133,6 +170,60 @@ async def verify_token(token: str) -> Optional[str]:
         logger.error(f"Token验证错误: {e}")
         return None
 
+async def check_and_generate_today_codes():
+    """检查并生成当日验证码（如果还没有的话）"""
+    try:
+        # 检查是否已有今日验证码
+        has_valid_codes = await has_today_valid_codes()
+        
+        if not has_valid_codes:
+            logger.info("未找到当日有效验证码，正在生成...")
+            await generate_and_send_daily_codes()
+            logger.info("当日验证码生成并发送完成")
+        else:
+            logger.info("当日验证码已存在且有效")
+            
+    except Exception as e:
+        logger.error(f"检查并生成当日验证码失败: {e}")
+        # 即使失败也不阻止应用启动，只记录错误
+
+async def has_today_valid_codes() -> bool:
+    """检查是否有当日有效的验证码"""
+    try:
+        # 读取现有验证码
+        async with aiofiles.open("data/daily_codes.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            daily_codes = json.loads(content) if content else {}
+        
+        if not daily_codes:
+            return False
+        
+        # 获取用户列表
+        users = settings.get_users()
+        today = datetime.now().date()
+        
+        # 检查每个用户是否都有今日有效验证码
+        for username in users.keys():
+            if username not in daily_codes:
+                return False
+            
+            user_code_info = daily_codes[username]
+            generated_time = datetime.fromisoformat(user_code_info["generated_at"])
+            
+            # 检查是否是今天生成的且在24小时内
+            if (generated_time.date() != today or 
+                datetime.now() - generated_time > timedelta(hours=24)):
+                return False
+        
+        return True
+        
+    except FileNotFoundError:
+        # 文件不存在，说明没有验证码
+        return False
+    except Exception as e:
+        logger.error(f"检查当日验证码失败: {e}")
+        return False
+
 async def daily_code_generator():
     """每日验证码生成和发送任务"""
     while True:
@@ -145,8 +236,13 @@ async def daily_code_generator():
             if sleep_seconds > 0:
                 await asyncio.sleep(sleep_seconds)
             
-            await generate_and_send_daily_codes()
-            logger.info("每日验证码生成并发送完成")
+            # 检查是否需要生成验证码（避免重复生成）
+            has_valid_codes = await has_today_valid_codes()
+            if not has_valid_codes:
+                await generate_and_send_daily_codes()
+                logger.info("定时任务：每日验证码生成并发送完成")
+            else:
+                logger.info("定时任务：当日验证码已存在，跳过生成")
             
         except Exception as e:
             logger.error(f"每日验证码生成任务错误: {e}")
@@ -338,9 +434,13 @@ async def get_current_user_info(current_user: str = Depends(get_current_user)):
     """获取当前用户信息"""
     users = settings.get_users()
     if current_user in users:
+        user_info = users[current_user]
         return {
             "username": current_user,
-            "email": users[current_user]["email"]
+            "email": user_info["email"],
+            "role": user_info.get("role", "user"),
+            "enabled": user_info.get("enabled", False),
+            "is_admin": user_info.get("role") == "admin"
         }
     raise HTTPException(status_code=404, detail="用户信息未找到")
 
@@ -426,7 +526,7 @@ async def log_user_activity(username: str, activity_type: str, details: Dict[str
 
 @app.get("/api/admin/logs")
 async def get_activity_logs(
-    current_user: str = Depends(get_current_user),
+    current_admin: str = Depends(get_current_admin),
     limit: int = 100
 ):
     """获取活动日志（管理员功能）"""
@@ -458,6 +558,32 @@ async def get_activity_logs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取日志失败"
+        )
+
+@app.post("/api/admin/generate-codes")
+async def manual_generate_daily_codes(current_admin: str = Depends(get_current_admin)):
+    """手动生成并发送当日验证码（管理员功能）"""
+    try:
+        # 记录管理员操作
+        await log_user_activity(current_admin, "manual_generate_codes", {"success": True})
+        
+        # 生成并发送验证码
+        await generate_and_send_daily_codes()
+        
+        logger.info(f"管理员 {current_admin} 手动生成了当日验证码")
+        
+        return {
+            "success": True,
+            "message": "当日验证码已生成并发送",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"手动生成验证码失败: {e}")
+        await log_user_activity(current_admin, "manual_generate_codes", {"success": False, "error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"生成验证码失败: {str(e)}"
         )
 
 if __name__ == "__main__":
