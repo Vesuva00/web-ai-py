@@ -242,8 +242,8 @@ function renderEmptyWorkflows() {
     container.innerHTML = `
         <div class="col-span-full flex flex-col items-center justify-center py-12">
             <i class="fas fa-cogs text-gray-400 text-6xl mb-4 opacity-50"></i>
-            <h3 class="text-xl text-gray-300 mb-2">暂无可用工作流</h3>
-            <p class="text-gray-400">请联系管理员添加工作流</p>
+            <h3 class="text-xl text-gray-600 mb-2">暂无可用工作流</h3>
+            <p class="text-gray-500">请联系管理员添加工作流</p>
         </div>
     `;
 }
@@ -263,8 +263,8 @@ function createWorkflowCard(workflow) {
     card.innerHTML = `
         <div class="text-center">
             <i class="${icon} ${color} text-4xl mb-4"></i>
-            <h3 class="text-xl font-bold text-white mb-2">${workflow.description || workflow.name}</h3>
-            <p class="text-gray-300 text-sm mb-4">${workflow.input_schema?.description || '点击开始使用'}</p>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">${workflow.description || workflow.name}</h3>
+            <p class="text-gray-600 text-sm mb-4">${workflow.input_schema?.description || '点击开始使用'}</p>
             <div class="flex flex-wrap justify-center gap-2 text-xs">
                 ${tags.map(tag => `<span class="${tag.class} px-2 py-1 rounded">${tag.text}</span>`).join('')}
             </div>
@@ -419,7 +419,7 @@ function createFormField(name, schema, isRequired) {
     fieldDiv.className = 'mb-4';
     
     const label = document.createElement('label');
-    label.className = 'block text-white text-sm font-medium mb-2';
+    label.className = 'block text-gray-800 text-sm font-medium mb-2';
     label.innerHTML = `
         <i class="${getFieldIcon(schema.type)} mr-1"></i>
         ${schema.description || name}
@@ -483,7 +483,7 @@ function createTextInput(name, schema, isRequired) {
     input.id = `field-${name}`;
     input.name = name;
     input.required = isRequired;
-    input.className = 'w-full px-4 py-3 rounded-lg bg-white bg-opacity-20 border border-gray-300 border-opacity-30 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400';
+    input.className = 'w-full px-4 py-3 rounded-lg bg-white border border-gray-300 text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400';
     
     if (schema.default) input.value = schema.default;
     if (schema.placeholder) input.placeholder = schema.placeholder;
@@ -503,7 +503,7 @@ function createTextareaField(name, schema, isRequired) {
     textarea.name = name;
     textarea.required = isRequired;
     textarea.rows = 4;
-    textarea.className = 'w-full px-4 py-3 rounded-lg bg-white bg-opacity-20 border border-gray-300 border-opacity-30 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400';
+    textarea.className = 'w-full px-4 py-3 rounded-lg bg-white border border-gray-300 text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400';
     
     if (schema.default) textarea.value = schema.default;
     if (schema.placeholder) textarea.placeholder = schema.placeholder;
@@ -520,7 +520,7 @@ function createSelectField(name, schema) {
     const select = document.createElement('select');
     select.id = `field-${name}`;
     select.name = name;
-    select.className = 'w-full px-4 py-3 rounded-lg bg-white bg-opacity-20 border border-gray-300 border-opacity-30 text-white focus:outline-none focus:ring-2 focus:ring-blue-400';
+    select.className = 'w-full px-4 py-3 rounded-lg bg-white border border-gray-300 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400';
     
     schema.enum.forEach(option => {
         const optionElement = document.createElement('option');
@@ -544,7 +544,7 @@ function createNumberInput(name, schema, isRequired) {
     input.id = `field-${name}`;
     input.name = name;
     input.required = isRequired;
-    input.className = 'w-full px-4 py-3 rounded-lg bg-white bg-opacity-20 border border-gray-300 border-opacity-30 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400';
+    input.className = 'w-full px-4 py-3 rounded-lg bg-white border border-gray-300 text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400';
     
     if (schema.default !== undefined) input.value = schema.default;
     if (schema.minimum !== undefined) input.min = schema.minimum;
@@ -571,7 +571,7 @@ function createCheckboxField(name, schema) {
     
     const label = document.createElement('label');
     label.htmlFor = `field-${name}`;
-    label.className = 'text-white text-sm';
+    label.className = 'text-gray-800 text-sm';
     label.textContent = schema.description || name;
     
     wrapper.appendChild(input);
@@ -591,11 +591,11 @@ function createArrayField(name, schema, isRequired) {
     input.name = name;
     input.required = isRequired;
     input.rows = 3;
-    input.className = 'w-full px-4 py-3 rounded-lg bg-white bg-opacity-20 border border-gray-300 border-opacity-30 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400';
+    input.className = 'w-full px-4 py-3 rounded-lg bg-white border border-gray-300 text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400';
     input.placeholder = '请输入数组项，每行一个';
     
     const help = document.createElement('small');
-    help.className = 'text-gray-400 text-xs mt-1 block';
+    help.className = 'text-gray-600 text-xs mt-1 block';
     help.textContent = '每行输入一个数组项';
     
     wrapper.appendChild(input);
@@ -732,8 +732,8 @@ function displayWorkflowResult(result) {
         const simpleResult = document.createElement('div');
         simpleResult.className = 'glass-effect rounded-lg p-6';
         simpleResult.innerHTML = `
-            <h4 class="text-lg font-semibold text-white mb-4">执行结果</h4>
-            <pre class="text-gray-300 whitespace-pre-wrap">${JSON.stringify(outputs, null, 2)}</pre>
+            <h4 class="text-lg font-semibold text-gray-800 mb-4">执行结果</h4>
+            <pre class="text-gray-600 whitespace-pre-wrap">${JSON.stringify(outputs, null, 2)}</pre>
         `;
         resultContainer.appendChild(simpleResult);
     }
@@ -754,18 +754,18 @@ function createResultCard(outputs) {
     // 特殊处理诗歌结果
     if (outputs.poem && outputs.title) {
         content = `
-            <h4 class="text-xl font-bold text-center text-yellow-400 mb-4">${outputs.title}</h4>
-            <div class="poem-display text-white text-center mb-4">${outputs.poem}</div>
+            <h4 class="text-xl font-bold text-center text-yellow-600 mb-4">${outputs.title}</h4>
+            <div class="poem-display text-gray-800 text-center mb-4">${outputs.poem}</div>
             ${outputs.analysis ? `
                 <div class="border-t border-gray-400 pt-4">
-                    <h5 class="text-sm font-semibold text-gray-300 mb-2">创作说明：</h5>
-                    <p class="text-sm text-gray-300">${outputs.analysis}</p>
+                    <h5 class="text-sm font-semibold text-gray-700 mb-2">创作说明：</h5>
+                    <p class="text-sm text-gray-600">${outputs.analysis}</p>
                 </div>
             ` : ''}
             ${outputs.metadata ? `
-                <div class="mt-4 flex justify-between text-xs text-gray-400">
+                <div class="mt-4 flex justify-between text-xs text-gray-600">
                     <span>${outputs.metadata.line_count || 0}行 · ${outputs.metadata.word_count || 0}字 · ${outputs.metadata.style || ''}风格</span>
-                    <button onclick="copyResult('${outputs.title}', '${outputs.poem}')" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded transition">
+                    <button onclick="copyResult('${outputs.title}', '${outputs.poem}')" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded transition text-white">
                         <i class="fas fa-copy mr-1"></i>复制
                     </button>
                 </div>
@@ -773,15 +773,15 @@ function createResultCard(outputs) {
         `;
     } else {
         // 通用结果显示
-        content = '<h4 class="text-lg font-semibold text-white mb-4">执行结果</h4>';
+        content = '<h4 class="text-lg font-semibold text-gray-800 mb-4">执行结果</h4>';
         
         Object.entries(outputs).forEach(([key, value]) => {
             content += `
                 <div class="mb-3">
-                    <label class="text-sm font-medium text-gray-300">${key}:</label>
-                    <div class="mt-1 text-white">
+                    <label class="text-sm font-medium text-gray-700">${key}:</label>
+                    <div class="mt-1 text-gray-800">
                         ${typeof value === 'string' && value.includes('\n') ? 
-                            `<pre class="whitespace-pre-wrap bg-black bg-opacity-20 p-3 rounded">${value}</pre>` :
+                            `<pre class="whitespace-pre-wrap bg-gray-100 p-3 rounded">${value}</pre>` :
                             `<span>${value}</span>`
                         }
                     </div>
@@ -791,7 +791,7 @@ function createResultCard(outputs) {
         
         content += `
             <div class="mt-4 text-right">
-                <button onclick="copyResult('结果', '${JSON.stringify(outputs).replace(/'/g, "\\'")}')" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded transition text-xs">
+                <button onclick="copyResult('结果', '${JSON.stringify(outputs).replace(/'/g, "\\'")}')" class="bg-gray-600 hover:bg-gray-700 px-3 py-1 rounded transition text-xs text-white">
                     <i class="fas fa-copy mr-1"></i>复制结果
                 </button>
             </div>
@@ -875,11 +875,11 @@ function setupSelectStyles() {
     selects.forEach(select => {
         // 为选择框添加自定义样式
         select.addEventListener('focus', function() {
-            this.style.color = 'white';
+            this.style.color = '#1f2937';
         });
         
         select.addEventListener('change', function() {
-            this.style.color = 'white';
+            this.style.color = '#1f2937';
         });
     });
 }
