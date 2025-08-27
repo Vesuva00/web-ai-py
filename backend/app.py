@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import sqlite3
 import asyncio
 import logging
@@ -323,7 +324,7 @@ def _send_email_sync(msg: MIMEMultipart, email: str):
 @app.get("/")
 async def read_root():
     """根路径，返回前端页面"""
-    return {"message": "AI工作流平台后端服务正在运行"}
+    return FileResponse("frontend/index.html")
 
 @app.post("/api/auth/login")
 async def login(request: LoginRequest):
