@@ -1,104 +1,465 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-安全的前后端分离Web服务 - 主应用入口
-支持基于大模型的多种工作流，通过每日验证码进行安全访问控制
+安全网页服务后端主程序
+基于FastAPI的前后端分离架构，支持每日验证码和大模型工作流
 """
 
-import os
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import sqlite3
+import asyncio
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from werkzeug.security import generate_password_hash, check_password_hash
-from dotenv import load_dotenv
+import secrets
+import hashlib
+import json
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, EmailStr
+import smtplib
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
+import aiofiles
+import httpx
+import uuid
+from contextlib import asynccontextmanager
 
-# 加载环境变量
-load_dotenv()
-
-# 初始化Flask应用
-app = Flask(__name__)
-
-# 基础配置
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.getenv('SECRET_KEY', 'jwt-secret-string')
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
-
-# 安全头配置
-@app.after_request
-def after_request(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    response.headers['Content-Security-Policy'] = "default-src 'self'"
-    return response
-
-# 初始化扩展
-db = SQLAlchemy(app)
-jwt = JWTManager(app)
-CORS(app, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
+from config.settings import Settings
+from database.models import init_database
+from workflows.base import WorkflowManager
+from workflows.poem_generator import PoemWorkflow
+from utils.logger import setup_logger
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
-# 导入模型和路由
-from models import init_db, User, DailyCode, WorkflowCall, SystemLog
-from auth import auth_bp
-from workflows import workflows_bp
+# 初始化配置
+settings = Settings()
 
-# 初始化数据库模型
-init_db(db)
+# 数据模型
+class LoginRequest(BaseModel):
+    username: str
+    daily_code: str
 
-# 注册蓝图
-app.register_blueprint(auth_bp, url_prefix='/api/auth')
-app.register_blueprint(workflows_bp, url_prefix='/api/workflows')
+class WorkflowRequest(BaseModel):
+    workflow_type: str
+    inputs: Dict[str, Any]
 
-# 健康检查接口
-@app.route('/health')
-def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0'
-    })
+class UserInfo(BaseModel):
+    username: str
+    email: EmailStr
 
-# 错误处理
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': '接口不存在'}), 404
+# 安全中间件
+security = HTTPBearer()
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f'内部服务器错误: {error}')
-    return jsonify({'error': '服务器内部错误'}), 500
-
-@app.errorhandler(400)
-def bad_request(error):
-    return jsonify({'error': '请求参数错误'}), 400
-
-# 初始化数据库
-@app.before_first_request
-def create_tables():
-    db.create_all()
-    logger.info('数据库表初始化完成')
-
-if __name__ == '__main__':
-    host = os.getenv('HOST', '127.0.0.1')
-    port = int(os.getenv('PORT', 5000))
-    debug = os.getenv('DEBUG', 'False').lower() == 'true'
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时初始化
+    await init_database()
+    logger.info("数据库初始化完成")
     
-    logger.info(f'启动应用服务器 {host}:{port}, Debug模式: {debug}')
-    app.run(host=host, port=port, debug=debug)
+    # 启动每日验证码生成任务
+    asyncio.create_task(daily_code_generator())
+    logger.info("每日验证码生成任务启动")
+    
+    yield
+    
+    # 关闭时清理
+    logger.info("应用关闭")
+
+# 创建FastAPI应用
+app = FastAPI(
+    title="安全AI工作流服务",
+    description="基于每日验证码的安全AI工作流平台",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 静态文件服务
+app.mount("/static", StaticFiles(directory="../frontend"), name="static")
+
+# 工作流管理器
+workflow_manager = WorkflowManager()
+workflow_manager.register_workflow("poem", PoemWorkflow())
+
+# 注册文本分析工作流
+from workflows.text_analyzer import TextAnalyzerWorkflow
+workflow_manager.register_workflow("text_analyzer", TextAnalyzerWorkflow())
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """验证当前用户token"""
+    try:
+        token = credentials.credentials
+        username = await verify_token(token)
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的访问令牌"
+            )
+        return username
+    except Exception as e:
+        logger.error(f"用户验证失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="身份验证失败"
+        )
+
+async def verify_token(token: str) -> Optional[str]:
+    """验证访问令牌"""
+    try:
+        async with aiofiles.open("data/active_tokens.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            tokens = json.loads(content) if content else {}
+        
+        if token in tokens:
+            token_info = tokens[token]
+            # 检查token是否过期（24小时有效期）
+            issued_time = datetime.fromisoformat(token_info["issued_at"])
+            if datetime.now() - issued_time < timedelta(hours=24):
+                return token_info["username"]
+        
+        return None
+    except Exception as e:
+        logger.error(f"Token验证错误: {e}")
+        return None
+
+async def daily_code_generator():
+    """每日验证码生成和发送任务"""
+    while True:
+        try:
+            # 每天凌晨00:01生成新的验证码
+            now = datetime.now()
+            tomorrow = now.replace(hour=0, minute=1, second=0, microsecond=0) + timedelta(days=1)
+            sleep_seconds = (tomorrow - now).total_seconds()
+            
+            if sleep_seconds > 0:
+                await asyncio.sleep(sleep_seconds)
+            
+            await generate_and_send_daily_codes()
+            logger.info("每日验证码生成并发送完成")
+            
+        except Exception as e:
+            logger.error(f"每日验证码生成任务错误: {e}")
+            await asyncio.sleep(60)  # 出错后等待1分钟重试
+
+async def generate_and_send_daily_codes():
+    """生成并发送每日验证码"""
+    try:
+        # 读取用户配置
+        users = settings.get_users()
+        daily_codes = {}
+        
+        for username, user_info in users.items():
+            # 为每个用户生成唯一的6位数字验证码
+            code = secrets.randbelow(900000) + 100000
+            daily_codes[username] = {
+                "code": str(code),
+                "generated_at": datetime.now().isoformat(),
+                "email": user_info["email"]
+            }
+            
+            # 发送邮件
+            await send_daily_code_email(user_info["email"], username, str(code))
+        
+        # 保存验证码
+        async with aiofiles.open("data/daily_codes.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(daily_codes, ensure_ascii=False, indent=2))
+        
+        logger.info(f"为 {len(users)} 个用户生成并发送了每日验证码")
+        
+    except Exception as e:
+        logger.error(f"生成每日验证码失败: {e}")
+        raise
+
+async def send_daily_code_email(email: str, username: str, code: str):
+    """发送每日验证码邮件"""
+    try:
+        msg = MimeMultipart()
+        msg['From'] = settings.SMTP_USERNAME
+        msg['To'] = email
+        msg['Subject'] = f"AI工作流平台每日登录码 - {datetime.now().strftime('%Y-%m-%d')}"
+        
+        body = f"""
+        尊敬的 {username}，
+        
+        您的今日登录验证码是：{code}
+        
+        此验证码有效期为24小时，请及时使用。
+        
+        祝您使用愉快！
+        AI工作流平台
+        """
+        
+        msg.attach(MimeText(body, 'plain', 'utf-8'))
+        
+        # 异步发送邮件
+        await asyncio.get_event_loop().run_in_executor(
+            None, 
+            lambda: _send_email_sync(msg, email)
+        )
+        
+        logger.info(f"每日验证码邮件已发送至: {email}")
+        
+    except Exception as e:
+        logger.error(f"发送邮件失败 ({email}): {e}")
+        raise
+
+def _send_email_sync(msg: MimeMultipart, email: str):
+    """同步发送邮件"""
+    server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
+    server.starttls()
+    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+    server.send_message(msg)
+    server.quit()
+
+# API路由
+
+@app.get("/")
+async def read_root():
+    """根路径，返回前端页面"""
+    return {"message": "AI工作流平台后端服务正在运行"}
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest):
+    """用户登录接口"""
+    try:
+        # 验证用户名和验证码
+        if not await verify_daily_code(request.username, request.daily_code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="用户名或验证码错误"
+            )
+        
+        # 生成访问令牌
+        token = secrets.token_urlsafe(32)
+        
+        # 保存token
+        await save_access_token(token, request.username)
+        
+        # 记录登录日志
+        await log_user_activity(request.username, "login", {"success": True})
+        
+        logger.info(f"用户 {request.username} 登录成功")
+        
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "username": request.username
+        }
+        
+    except HTTPException:
+        await log_user_activity(request.username, "login", {"success": False})
+        raise
+    except Exception as e:
+        logger.error(f"登录处理错误: {e}")
+        await log_user_activity(request.username, "login", {"success": False, "error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="登录处理失败"
+        )
+
+async def verify_daily_code(username: str, code: str) -> bool:
+    """验证每日验证码"""
+    try:
+        # 检查用户是否存在
+        users = settings.get_users()
+        if username not in users:
+            return False
+        
+        # 读取当日验证码
+        async with aiofiles.open("data/daily_codes.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            daily_codes = json.loads(content) if content else {}
+        
+        if username not in daily_codes:
+            return False
+        
+        user_code_info = daily_codes[username]
+        generated_time = datetime.fromisoformat(user_code_info["generated_at"])
+        
+        # 检查验证码是否在有效期内（24小时）
+        if datetime.now() - generated_time > timedelta(hours=24):
+            return False
+        
+        return user_code_info["code"] == code
+        
+    except Exception as e:
+        logger.error(f"验证码验证错误: {e}")
+        return False
+
+async def save_access_token(token: str, username: str):
+    """保存访问令牌"""
+    try:
+        # 读取现有token
+        try:
+            async with aiofiles.open("data/active_tokens.json", "r", encoding="utf-8") as f:
+                content = await f.read()
+                tokens = json.loads(content) if content else {}
+        except FileNotFoundError:
+            tokens = {}
+        
+        # 添加新token
+        tokens[token] = {
+            "username": username,
+            "issued_at": datetime.now().isoformat()
+        }
+        
+        # 清理过期token
+        current_time = datetime.now()
+        expired_tokens = []
+        for t, info in tokens.items():
+            issued_time = datetime.fromisoformat(info["issued_at"])
+            if current_time - issued_time > timedelta(hours=24):
+                expired_tokens.append(t)
+        
+        for t in expired_tokens:
+            del tokens[t]
+        
+        # 保存token
+        async with aiofiles.open("data/active_tokens.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(tokens, ensure_ascii=False, indent=2))
+            
+    except Exception as e:
+        logger.error(f"保存访问令牌失败: {e}")
+        raise
+
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: str = Depends(get_current_user)):
+    """获取当前用户信息"""
+    users = settings.get_users()
+    if current_user in users:
+        return {
+            "username": current_user,
+            "email": users[current_user]["email"]
+        }
+    raise HTTPException(status_code=404, detail="用户信息未找到")
+
+@app.get("/api/workflows")
+async def get_available_workflows(current_user: str = Depends(get_current_user)):
+    """获取可用的工作流列表"""
+    return {
+        "workflows": workflow_manager.get_available_workflows()
+    }
+
+@app.post("/api/workflows/execute")
+async def execute_workflow(
+    request: WorkflowRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """执行工作流"""
+    try:
+        # 记录请求日志
+        await log_user_activity(
+            current_user, 
+            "workflow_execute", 
+            {
+                "workflow_type": request.workflow_type,
+                "inputs": request.inputs
+            }
+        )
+        
+        # 执行工作流
+        result = await workflow_manager.execute_workflow(
+            request.workflow_type,
+            request.inputs,
+            current_user
+        )
+        
+        logger.info(f"用户 {current_user} 执行工作流 {request.workflow_type} 成功")
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"工作流执行失败: {e}")
+        await log_user_activity(
+            current_user,
+            "workflow_execute_error",
+            {
+                "workflow_type": request.workflow_type,
+                "error": str(e)
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"工作流执行失败: {str(e)}"
+        )
+
+async def log_user_activity(username: str, activity_type: str, details: Dict[str, Any]):
+    """记录用户活动日志"""
+    try:
+        conn = sqlite3.connect("data/activity_logs.db")
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                activity_type TEXT NOT NULL,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        cursor.execute("""
+            INSERT INTO activity_logs (username, activity_type, details)
+            VALUES (?, ?, ?)
+        """, (username, activity_type, json.dumps(details, ensure_ascii=False)))
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"记录用户活动失败: {e}")
+
+@app.get("/api/admin/logs")
+async def get_activity_logs(
+    current_user: str = Depends(get_current_user),
+    limit: int = 100
+):
+    """获取活动日志（管理员功能）"""
+    try:
+        conn = sqlite3.connect("data/activity_logs.db")
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT username, activity_type, details, timestamp
+            FROM activity_logs
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        
+        logs = []
+        for row in cursor.fetchall():
+            logs.append({
+                "username": row[0],
+                "activity_type": row[1],
+                "details": json.loads(row[2]) if row[2] else {},
+                "timestamp": row[3]
+            })
+        
+        conn.close()
+        return {"logs": logs}
+        
+    except Exception as e:
+        logger.error(f"获取活动日志失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取日志失败"
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,0 +1,20 @@
+# 用户配置文件
+# 仅通过修改此文件来管理用户
+# 每日验证码将发送到配置的邮箱地址
+
+users:
+  admin:
+    email: "admin@example.com"
+    role: "admin"
+    enabled: true
+    
+  user1:
+    email: "user1@example.com"
+    role: "user"
+    enabled: true
+    
+  # 添加新用户示例：
+  # user2:
+  #   email: "user2@example.com"
+  #   role: "user"
+  #   enabled: true
